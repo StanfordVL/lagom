@@ -81,10 +81,12 @@ def run_experiment(run, config, seeds, log_dir, max_workers, chunksize=1, use_gp
             print(f"The old logging directory is renamed to '{old_log_path.absolute()}'. ")
             input('Please, press Enter to continue\n>>> ')
 
+    '''
     # save source files
     source_path = Path(log_path / 'source_files/')
     source_path.mkdir(parents=True)
     [copyfile(s, source_path / s.name) for s in Path(inspect.getsourcefile(run)).parent.glob('*.py')]
+    '''
     
     # Create subfolders for each ID and subsubfolders for each random seed
     for config in configs:
