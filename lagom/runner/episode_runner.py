@@ -27,6 +27,9 @@ class EpisodeRunner(BaseRunner):
             out_agent = agent.choose_action(observation, **kwargs)
             action = out_agent.pop('raw_action')
             next_observation, reward, step_info = env.step(action)
+            
+            if env.list_env[0].has_renderer: env.list_env[0].render()
+            
             # unbatch for [reward, step_info]
             reward, step_info = map(lambda x: x[0], [reward, step_info])
             step_info.info = {**step_info.info, **out_agent}
