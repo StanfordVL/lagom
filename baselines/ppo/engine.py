@@ -9,8 +9,14 @@ from lagom.transform import describe
 from lagom.utils import color_str
 from lagom.envs.wrappers import get_wrapper
 
+from torch.utils.tensorboard import SummaryWriter
 
-class Engine(BaseEngine):        
+class Engine(BaseEngine):
+    def __init__(self, config, **kwargs):
+        super().__init__(config, **kwargs)
+
+        self.writer = SummaryWriter(self.log_dir)
+        
     def train(self, n=None, **kwargs):
         self.agent.train()
         start_time = perf_counter()
@@ -37,7 +43,17 @@ class Engine(BaseEngine):
         monitor_env = get_wrapper(self.env, 'VecMonitor')
         logger('running_return', describe(monitor_env.return_queue, axis=-1, repr_indent=1, repr_prefix='\n'))
         logger('running_horizon', describe(monitor_env.horizon_queue, axis=-1, repr_indent=1, repr_prefix='\n'))
+
+        def safemean(xs):
+            return np.nan if len(xs) == 0 else np.mean(xs)
+
+        for key in infos[0]['add_vals']:
+            self.writer.add_scalar(key+'_mean', safemean([info[key] for info in infos]), n)
+        
         return logger
         
     def eval(self, n=None, **kwargs):
         pass
+
+    def __del__(self):
+        self.writer.close()
