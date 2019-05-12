@@ -25,67 +25,60 @@ def runner(config, seed, device, logdir, make_env, args):
 
     print("Now running....")
     env = make_env(args)
+    args.replay = True
     eval_env = make_env(args)
     agent = Agent(config, env, device)
-    replay = ReplayBuffer(config['replay.capacity'], device)
-    engine = Engine(config, agent=agent, env=env, eval_env=eval_env, replay=replay)
+    replay = ReplayBuffer(env, config['replay.capacity'], device)
+    engine = Engine(config, agent=agent, env=env, eval_env=eval_env, replay=replay, log_dir=logdir)
 
-    train_logs = []
-    checkpoint_count = 0
-    for i in count():
-        if agent.total_timestep >= config['train.timestep']: break
-        train_logger = engine.train(i)
-        train_logs.append(train_logger.logs)
-        if i == 0 or (i+1) % config['log.freq'] == 0:
-            train_logger.dump(keys=None, index=0, indent=0, border='-'*50)
-        if True: 
-            agent.checkpoint(logdir, i + 1)
-            checkpoint_count += 1
-    
-    print("train_logs: ", train_logs) # TODO - remove debug statement
-    #pickle_dump(obj=train_logs, f=logdir/'train_logs', ext='.pkl')
-    #pickle_dump(obj=eval_logs, f=logdir/'eval_logs', ext='.pkl')
+    engine.train()
     return None  
 
+def generate_config(args, create_config_obj=True):
+    """
+    Translate between internal names and lagom-specific names
+    """
+    config = {'log.freq': 1,
+              'checkpoint.num': 1,
+              
+              'agent.gamma': args.gamma,
+              # polyak averaging coefficient for targets update
+              'agent.polyak': args.polyak,
+              'agent.actor.lr': args.actor_lr,
+              'agent.actor.use_lr_scheduler': args.actor_use_lr_scheduler,
+              'agent.critic.lr': args.critic_lr,
+              'agent.critic.use_lr_scheduler': args.critic_use_lr_scheduler,
+              'agent.action_noise': args.action_noise,
+              'agent.target_noise': args.target_noise,
+              'agent.target_noise_clip': args.target_noise_clip,
+              'agent.policy_delay': args.policy_delay,
+              'agent.max_grad_norm': args.max_grad_norm,  # grad clipping by norm
+              
+              'replay.capacity': args.replay_capacity, 
+              # number of time steps to take uniform actions initially
+              'replay.init_size': args.replay_init_size,
+              'replay.batch_size': args.replay_batch_size,
+              
+              'train.timestep': args.num_timesteps,  # total number of training (environmental) timesteps
+              'eval.freq': 1,#5000,
+              'eval.num_episode': 1#10
+        }
+
+    if create_config_obj: 
+        return Config(config)
+    else:
+        return config
+    
 def train_td3(make_env_func, args):
-
-    config = Config(
-        {'cuda': True, 
-         'log.freq': 1,#5,  # every n episodes
-         'checkpoint.freq': 10,#int(1e5),  # every n timesteps
-
-         #'env.id': Grid(['HalfCheetah-v3', 'Hopper-v3', 'Walker2d-v3', 'Swimmer-v3']),
-
-         'agent.gamma': 0.99,
-         'agent.polyak': 0.995,  # polyak averaging coefficient for targets update
-         'agent.actor.lr': 1e-3, 
-         'agent.actor.use_lr_scheduler': False,
-         'agent.critic.lr': 1e-3,
-         'agent.critic.use_lr_scheduler': False,
-         'agent.action_noise': 0.1,
-         'agent.target_noise': 0.2,
-         'agent.target_noise_clip': 0.5,
-         'agent.policy_delay': 2,
-         'agent.max_grad_norm': 999999,  # grad clipping by norm
-
-         'replay.capacity': 1000000, 
-         # number of time steps to take uniform actions initially
-         'replay.init_size': 10000,#Condition(lambda x: 1000 if x['env.id'] in ['Hopper-v3', 'Walker2d-v3'] else 10000),  
-         'replay.batch_size': 100,
-
-         'train.timestep': int(1e6),  # total number of training (environmental) timesteps
-         'eval.freq': 128,#5000,
-         'eval.num_episode': 1#10
-
-        })
-
-
     # Note: this must be a partial to allow passing in a function to runner
     # runner cannot be nested here because then the multiprocessing code would not be able to pickle it
+    config = generate_config(args)
     run_experiment(run=partial(runner, make_env=make_env_func, args=args), 
                    config=config, 
-                   seeds=[4153361530],
+                   seeds=[args.seed],
                    log_dir=os.path.join(args.log_dir, 'lagom'),
-                   max_workers=args.ncpu)
+                   max_workers=None, #args.ncpu,
+                   use_gpu=False # TODO - try GPU
+    )
     
     return agent

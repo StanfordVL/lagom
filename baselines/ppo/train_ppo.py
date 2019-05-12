@@ -27,34 +27,19 @@ def runner(config, seed, device, logdir, make_env, args):
     set_global_seeds(seed)
 
     env = make_env(args)
-    #env = env.env
-    #print("env: ", env) # TODO - remove debug statement
-    #env = TimeLimit(env, env.spec.max_episode_steps)
-    #if config['env.clip_action'] and isinstance(env.action_space, Box):
-        #env = ClipAction(env)
-    
     if config['env.standardize_obs']:
         env = VecStandardizeObservation(env, clip=5.)
     if config['env.standardize_reward']:
         env = VecStandardizeReward(env, clip=10., gamma=config['agent.gamma'])
-    env = VecStepInfo(env)
+
+    args.replay = True
+    eval_env = make_env(args)
     
     agent = Agent(config, env, device)
     runner = EpisodeRunner(reset_on_call=False)
-    engine = Engine(config, agent=agent, env=env, runner=runner, log_dir=logdir)
-    train_logs = []
-    checkpoint_count = 0
-    for i in count():
-        if agent.total_timestep >= config['train.timestep']: break
-        train_logger = engine.train(i)
-        train_logs.append(train_logger.logs)
-        if i == 0 or (i+1) % config['log.freq'] == 0:
-            train_logger.dump(keys=None, index=0, indent=0, border='-'*50)
-        if True: # TODO
-        #if agent.total_timestep >= int(config['train.timestep']*(checkpoint_count/(config['checkpoint.num'] - 1))):
-            agent.checkpoint(logdir, i + 1)
-            checkpoint_count += 1
-    pickle_dump(obj=train_logs, f=logdir/'train_logs', ext='.pkl')
+    engine = Engine(config, agent=agent, env=env, eval_env=eval_env, runner=runner, log_dir=logdir)
+    engine.train()
+    
     return None
     
 def generate_config(args, create_config_obj=True):
@@ -93,13 +78,11 @@ def generate_config(args, create_config_obj=True):
         return config
 
 def train_ppo(make_env_func, args):
-    print("make_env_func: ", make_env_func) # TODO - remove debug statement
-    print("args: ", args) # TODO - remove debug statement
     from functools import partial
     config = generate_config(args)
     run_experiment(run=partial(runner, make_env=make_env_func, args=args), 
                    config=config, 
-                   seeds=[1770966829],
+                   seeds=[args.seed],
                    log_dir=os.path.join(args.log_dir, 'lagom'),
                    max_workers=None,# if args.initial_policy is not None else args.ncpu,
                    chunksize=1, 
