@@ -34,14 +34,14 @@ class Engine(BaseEngine):
             def safemean(xs):
                 return np.nan if len(xs) == 0 else np.mean(xs)
 
-            self.writer.add_scalar('train_reward_mean', np.mean([info['episode']['return'] for info in infos]), i)
-            for key in infos[0]['add_vals']:
-                self.writer.add_scalar('train_'+key+'mean', safemean([info[key] for info in infos]), i)
+            self.writer.add_scalar('train_reward_mean', safemean([info['episode']['return'] for info in infos]), i)
+            if len(infos) != 0 and 'add_vals' in infos[0]:
+                for key in infos[0]['add_vals']:
+                    self.writer.add_scalar('train_'+key+'mean', safemean([info[key] for info in infos]), i)
 
             self.eval(i)
-            if True: # TODO
-                self.agent.checkpoint(self.log_dir, i + 1)
-                checkpoint_count += 1
+            self.agent.checkpoint(self.log_dir, i + 1)
+            checkpoint_count += 1
 
         return logger
         
@@ -61,8 +61,9 @@ class Engine(BaseEngine):
             return np.nan if len(xs) == 0 else np.mean(xs)
 
         self.writer.add_scalar('eval_reward_mean', np.mean([info['episode']['return'] for info in infos]), n)
-        for key in infos[0]['add_vals']:
-            self.writer.add_scalar('eval_'+key+'mean', safemean([info[key] for info in infos]), n)
+        if 'add_vals' in infos[0]:
+            for key in infos[0]['add_vals']:
+                self.writer.add_scalar('eval_'+key+'mean', safemean([info[key] for info in infos]), n)
         
     def __del__(self):
         self.writer.close()

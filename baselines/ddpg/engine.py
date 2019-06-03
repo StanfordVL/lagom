@@ -10,15 +10,21 @@ from lagom.transform import describe
 from lagom.utils import color_str
 from lagom.envs.wrappers import get_wrapper
 
+from torch.utils.tensorboard import SummaryWriter
+
+import logging
+logger = logging.getLogger('robosuite.scripts.ddpg.engine')
 
 class Engine(BaseEngine):
+    
+    def __init__(self, config, **kwargs):
+        super().__init__(config, **kwargs)
+
+        self.writer = SummaryWriter(self.log_dir)
+
     def train(self, n=None, **kwargs):
-        train_logs = []
-        eval_logs = []
-        eval_togo = 0
-        dump_togo = 0
         num_episode = 0
-        checkpoint_count = 0
+        prev_critic_loss = float('inf')
         observation, _ = self.env.reset()
         for i in count():
             if i >= self.config['train.timestep']:
@@ -28,45 +34,42 @@ class Engine(BaseEngine):
             else:
                 action = self.agent.choose_action(observation, mode='train')['action']
             next_observation, reward, step_info = self.env.step(action)
-            eval_togo += 1
-            dump_togo += 1
             if step_info[0].last:  # [0] due to single environment
-                start_time = perf_counter()
                 self.replay.add(observation[0], action[0], reward[0], step_info[0]['last_observation'], step_info[0].terminal)
+
+                '''
+                # don't update actor if critic loss is too high
+                if num_episode < 100 or prev_critic_loss > self.config['agent.critic.burn_in_thresh']:
+                #if prev_critic_loss > self.config['agent.critic.burn_in_thresh']:
+                    for param_group in self.agent.actor_optimizer.param_groups:
+                        param_group['lr'] = 0
+                # but put back the learning rate if the loss is sufficiently low
+                elif self.agent.actor_optimizer.param_groups[0]['lr'] == 0:
+                    for param_group in self.agent.actor_optimizer.param_groups:
+                        param_group['lr'] = self.config['agent.critic.lr']
+                        logger.info("Just updated learning rate")
+                '''
                 
                 # updates in the end of episode, for each time step
                 out_agent = self.agent.learn(D=None, replay=self.replay, episode_length=step_info[0]['episode']['horizon'])
+
+                prev_critic_loss = out_agent['critic_loss']
                 num_episode += 1
-                if (i+1) >= int(self.config['train.timestep']*(checkpoint_count/(self.config['checkpoint.num'] - 1))):
-                    self.agent.checkpoint(self.logdir, num_episode)
-                    checkpoint_count += 1
-                logger = Logger()
-                logger('num_seconds', round(perf_counter() - start_time, 1))
-                logger('accumulated_trained_timesteps', i + 1)
-                logger('accumulated_trained_episodes', num_episode)
-                [logger(key, value) for key, value in out_agent.items()]
-                logger('episode_return', step_info[0]['episode']['return'])
-                logger('episode_horizon', step_info[0]['episode']['horizon'])
-                train_logs.append(logger.logs)
-                if dump_togo >= self.config['log.freq']:
-                    dump_togo %= self.config['log.freq']
-                    logger.dump(keys=None, index=0, indent=0, border='-'*50)
-                if eval_togo >= self.config['eval.freq']:
-                    eval_togo %= self.config['eval.freq']
-                    eval_logs.append(self.eval(accumulated_trained_timesteps=(i+1), 
-                                               accumulated_trained_episodes=num_episode))
+                
+                self.writer.add_scalar('actor_lr', self.agent.actor_optimizer.param_groups[0]['lr'], num_episode)
+                self.writer.add_scalar('critic_loss', out_agent['critic_loss'], num_episode)
+                self.writer.add_scalar('actor_loss', out_agent['actor_loss'], num_episode)
+
+                self.agent.checkpoint(self.log_dir, num_episode)
+                self.eval(num_episode)
             else:
                 self.replay.add(observation[0], action[0], reward[0], next_observation[0], step_info[0].terminal)
             observation = next_observation
-        if checkpoint_count < self.config['checkpoint.num']:
-            self.agent.checkpoint(self.logdir, num_episode)
-            checkpoint_count += 1
+            
         return train_logs, eval_logs
 
     def eval(self, n=None, **kwargs):
-        start_time = perf_counter()
-        returns = []
-        horizons = []
+        infos = []
         for _ in range(self.config['eval.num_episode']):
             observation = self.eval_env.reset()
             for _ in range(self.eval_env.spec.max_episode_steps):
@@ -74,19 +77,19 @@ class Engine(BaseEngine):
                     action = self.agent.choose_action(observation, mode='eval')['action']
                 next_observation, reward, done, info = self.eval_env.step(action)
                 if done[0]:  # [0] single environment
-                    returns.append(info[0]['episode']['return'])
-                    horizons.append(info[0]['episode']['horizon'])
+                    infos.append(info[0])
                     break
                 observation = next_observation
-        logger = Logger()
-        logger('num_seconds', round(perf_counter() - start_time, 1))
-        logger('accumulated_trained_timesteps', kwargs['accumulated_trained_timesteps'])
-        logger('accumulated_trained_episodes', kwargs['accumulated_trained_episodes'])
-        logger('online_return', describe(returns, axis=-1, repr_indent=1, repr_prefix='\n'))
-        logger('online_horizon', describe(horizons, axis=-1, repr_indent=1, repr_prefix='\n'))
+                        
+        def safemean(xs):
+            return np.nan if len(xs) == 0 else np.mean(xs)
+        self.writer.add_scalar('eval_reward_mean', safemean([info['episode']['return'] for info in infos]), n)
+        if 'add_vals' in infos[0]:
+            for key in infos[0]['add_vals']:
+                self.writer.add_scalar('eval_'+key+'mean', safemean([info[key] for info in infos]), n)
         
-        monitor_env = get_wrapper(self.eval_env, 'VecMonitor')
-        logger('running_return', describe(monitor_env.return_queue, axis=-1, repr_indent=1, repr_prefix='\n'))
-        logger('running_horizon', describe(monitor_env.horizon_queue, axis=-1, repr_indent=1, repr_prefix='\n'))
-        logger.dump(keys=None, index=0, indent=0, border=color_str('+'*50, color='green'))
-        return logger.logs
+        return None
+        
+    def __del__(self):
+        self.writer.close()
+

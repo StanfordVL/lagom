@@ -100,7 +100,7 @@ class Agent(BaseAgent):
         out['action_dist'] = action_dist
         out['entropy'] = action_dist.entropy()
         
-        action = action_dist.sample() if 'eval_mode' not in kwargs else action_dist.mean
+        action = action_dist.sample() if kwargs.get('mode', 'train') == 'train' else action_dist.mean
         out['action'] = action
         out['raw_action'] = numpify(action, 'float')
         out['action_logprob'] = action_dist.log_prob(action.detach())

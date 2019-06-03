@@ -89,6 +89,8 @@ class Agent(BaseAgent):
             action = numpify(self.actor(obs), 'float')
         if kwargs['mode'] == 'train':
             eps = np.random.normal(0.0, self.action_noise, size=action.shape)
+            # TODO - this was added
+            action = np.clip(action, self.env.action_space.low, self.env.action_space.high)
             action = np.clip(action + eps, self.env.action_space.low, self.env.action_space.high)
         out = {}
         out['action'] = action
@@ -103,10 +105,37 @@ class Agent(BaseAgent):
         Q_vals = []
         for i in range(episode_length):
             observations, actions, rewards, next_observations, masks = replay.sample(self.config['replay.batch_size'])
-            
+
+
+            '''
+            with torch.no_grad():
+                #starting_obs = observations[0]
+                
+                starting_obs = torch.tensor(
+                    [ 0.44726958,  0.        ,  1.08990918, # eef pos
+                      0.70550221, -0.70584984,  0.04494798, -0.04497012, # eef quat
+                      0.        ,  0.        ,  0.        , # eef linear velocity
+                      0.        ,  0.        ,  0.        , # eef angular velocity
+                      0.        ,  0.5       ,   -0.15    ,  1.4       , # 1st viapoint
+                      0.        ,  0.5       ,  0.15      ,   1.4      , # 2nd viapoint
+                      0.        ,  0.5       ,  0.15      ,  1.2       , # 3rd viapoint
+                      0.        ,  0.5       , -0.15      ,  1.2       , # 4th viapoint
+                      0.05273042, -0.15      ,  0.31009082]) # initial policy action
+                
+                print("starting_obs: ", starting_obs) # TODO - remove debug statement
+                print("current critic expected value [0s]: ", self.critic(starting_obs, torch.tensor([0.0,0.0,0.0]))) # TODO - remove debug statement
+                starting_action = self.actor(starting_obs)
+                print("current critic expected value [action]: ", self.critic(starting_obs, starting_action)) # TODO - remove debug statement
+                print("starting_action: ", starting_action) # TODO - remove debug statement
+                print("current critic expected value [1s]: ", self.critic(starting_obs, torch.tensor([1.0,1.0,1.0]))) # TODO - remove debug statement
+                print("current critic expected value [-1s]: ", self.critic(starting_obs, torch.tensor([-1.0,-1.0,-1.0]))) # TODO - remove debug statement
+                print("actual expected value", 3973.02815081) # 382 for doing just all 1s
+            '''
             Qs = self.critic(observations, actions).squeeze()
+            #Qs = self.critic(observations, actions + observations[:, -3:]).squeeze()
             with torch.no_grad():
                 next_Qs = self.critic_target(next_observations, self.actor_target(next_observations)).squeeze()
+                #next_Qs = self.critic_target(next_observations, self.actor_target(next_observations) + next_observations[:,-3:]).squeeze()
             targets = rewards + self.config['agent.gamma']*masks*next_Qs.detach()
             
             critic_loss = F.mse_loss(Qs, targets)
@@ -115,14 +144,15 @@ class Agent(BaseAgent):
             critic_loss.backward()
             critic_grad_norm = nn.utils.clip_grad_norm_(self.critic.parameters(), self.config['agent.max_grad_norm'])
             self.critic_optimizer.step()
-            
-            actor_loss = -self.critic(observations, self.actor(observations)).mean()
+
+            actor_action = self.actor(observations)
+            #actor_action.register_hook(print)
+            actor_loss = -self.critic(observations, actor_action).mean() + actor_action.norm(dim=1).mean()
             self.actor_optimizer.zero_grad()
             self.critic_optimizer.zero_grad()
             actor_loss.backward()
             actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), self.config['agent.max_grad_norm'])
             self.actor_optimizer.step()
-            
             self.polyak_update_target()
             
             out['actor_loss'].append(actor_loss)

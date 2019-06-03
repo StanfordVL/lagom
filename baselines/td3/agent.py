@@ -14,6 +14,8 @@ from lagom.networks import Module
 from lagom.networks import make_fc
 from lagom.networks import ortho_init
 
+import logging
+logger = logging.getLogger('robosuite.scripts.td3.agent')
 
 class Actor(Module):
     def __init__(self, config, env, device, **kwargs):
@@ -88,7 +90,6 @@ class Agent(BaseAgent):
         self.critic_target.load_state_dict(self.critic.state_dict())
         self.critic_target.eval()
         self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=config['agent.critic.lr'])
-        
         self.max_action = env.action_space.high[0]
         
     def polyak_update_target(self):
@@ -119,7 +120,6 @@ class Agent(BaseAgent):
         Q2_vals = []
         for i in range(episode_length):
             observations, actions, rewards, next_observations, masks = replay.sample(self.config['replay.batch_size'])
-            
             Qs1, Qs2 = self.critic(observations, actions)
             with torch.no_grad():
                 next_actions = self.actor_target(next_observations)
@@ -135,7 +135,17 @@ class Agent(BaseAgent):
             critic_loss.backward()
             critic_grad_norm = nn.utils.clip_grad_norm_(self.critic.parameters(), self.config['agent.max_grad_norm'])
             self.critic_optimizer.step()
-            
+
+            '''
+            starting_obs = torch.tensor([ 0.44726958,  0.        ,  1.08990918,  0.70550221, -0.70584984,
+        0.04494798, -0.04497012,  0.        ,  0.        ,  0.        ,
+        0.        ,  0.        ,  0.        ,  0.        ,  0.5       ,
+       -0.15      ,  1.4       ,  0.        ,  0.5       ,  0.15      ,
+        1.4       ,  0.        ,  0.5       ,  0.15      ,  1.2       ,
+        0.        ,  0.5       , -0.15      ,  1.2       ,  0.05273042,
+       -0.15      ,  0.31009082])
+            starting_action = self.actor(starting_obs)
+            '''
             if i % self.config['agent.policy_delay'] == 0:
                 actor_loss = -self.critic.Q1(observations, self.actor(observations)).mean()
                 self.actor_optimizer.zero_grad()
@@ -143,7 +153,6 @@ class Agent(BaseAgent):
                 actor_loss.backward()
                 actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), self.config['agent.max_grad_norm'])
                 self.actor_optimizer.step()
-                
                 self.polyak_update_target()
             
                 out['actor_loss'].append(actor_loss)
@@ -160,5 +169,28 @@ class Agent(BaseAgent):
         return out
     
     def checkpoint(self, logdir, num_iter):
-        self.save(logdir/f'agent_{num_iter}.pth')
-        # TODO: save normalization moments
+        #self.save(logdir/f'agent_{num_iter}.pth')
+        import pickle
+        
+        torch.save({
+            'actor_state_dict':self.actor.state_dict(),
+            'actor_target_state_dict':self.actor_target.state_dict(),
+            'actor_optimizer':self.actor_optimizer.state_dict(),
+            'critic_state_dict':self.critic.state_dict(),
+            'critic_target_state_dict':self.critic_target.state_dict(),
+            'critic_optimizer':self.critic_optimizer.state_dict()
+            }, f=logdir/f'agent_{num_iter}.pth', pickle_protocol=pickle.HIGHEST_PROTOCOL)
+
+    def load(self, path):
+        checkpoint = torch.load(path)
+        
+        self.actor.load_state_dict(checkpoint['actor_state_dict'])
+        self.actor_target.load_state_dict(checkpoint['actor_target_state_dict'])
+        self.actor_target.eval()
+        self.actor_optimizer.load_state_dict(checkpoint['actor_optimizer'])
+        
+        self.critic.load_state_dict(checkpoint['critic_state_dict'])
+        self.critic_target.load_state_dict(checkpoint['critic_target_state_dict'])
+        self.critic_target.eval()
+        self.critic_optimizer.load_state_dict(checkpoint['critic_optimizer'])
+        

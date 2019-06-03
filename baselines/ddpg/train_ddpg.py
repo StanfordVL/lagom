@@ -14,10 +14,11 @@ from lagom.envs import make_vec_env
 from lagom.envs.wrappers import TimeLimit
 from lagom.envs.wrappers import ClipAction
 from lagom.envs.wrappers import VecMonitor
+from lagom.envs.wrappers import VecStepInfo
 
-from .agent import Agent
-from .engine import Engine
-from .replay_buffer import ReplayBuffer
+from baselines.ddpg.agent import Agent
+from baselines.ddpg.engine import Engine
+from baselines.ddpg.replay_buffer import ReplayBuffer
 
 def runner(config, seed, device, logdir, make_env, args):
     set_global_seeds(seed)
@@ -52,9 +53,6 @@ def generate_config(args, create_config_obj=True):
               'agent.critic.use_lr_scheduler': args.critic_use_lr_scheduler,
               'agent.critic.burn_in_thresh': args.critic_burn_in_thresh, # how long to only update critic
               'agent.action_noise': args.action_noise,
-              'agent.target_noise': args.target_noise,
-              'agent.target_noise_clip': args.target_noise_clip,
-              'agent.policy_delay': args.policy_delay,
               'agent.max_grad_norm': args.max_grad_norm,  # grad clipping by norm
               
               'replay.capacity': args.replay_capacity, 
@@ -64,16 +62,16 @@ def generate_config(args, create_config_obj=True):
               
               'train.timestep': args.num_timesteps,  # total number of training (environmental) timesteps
               'eval.freq': 1,#5000,
-              'eval.num_episode': 1#10
+              'eval.num_episode': 10 #1 TODO
         }
 
     if create_config_obj: 
         return Config(config)
     else:
         return config
-    
-def train_td3(make_env_func, args):
-    # Note: this must be a partial to allow passing in a function to runner
+
+def train_ddpg(make_env_func, args):
+    # Note: th is must be a partial to allow passing in a function to runner
     # runner cannot be nested here because then the multiprocessing code would not be able to pickle it
     config = generate_config(args)
     run_experiment(run=partial(runner, make_env=make_env_func, args=args), 
